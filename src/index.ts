@@ -6,15 +6,18 @@ import {
   StateGraph,
 } from "@langchain/langgraph";
 
-// Shared state for the workflow.
+// 1. Define the shared workflow state.
 const ResearchState = Annotation.Root({
   question: Annotation<string>(),
   research: Annotation<string>(),
   analysis: Annotation<string>(),
+  draft: Annotation<string>(),
+  criticDecision: Annotation<"APPROVE" | "REVISE">(),
+  revisionCount: Annotation<number>(),
   finalAnswer: Annotation<string>(),
 });
 
-// Research branch.
+// 2. Research branch.
 async function researchNode(
   state: typeof ResearchState.State,
 ) {
@@ -25,8 +28,7 @@ async function researchNode(
   };
 }
 
-// Analysis branch.
-// It uses the question directly, so it doesn't depend on Research.
+// 3. Analysis branch.
 async function analysisNode(
   state: typeof ResearchState.State,
 ) {
@@ -37,38 +39,110 @@ async function analysisNode(
   };
 }
 
-// Runs after both parallel branches have completed.
-async function synthesisNode(
+// 4. Create or revise the draft.
+async function draftNode(
   state: typeof ResearchState.State,
 ) {
-  console.log("[Synthesis Node] Running...");
+  const isRevision = state.revisionCount > 0;
+
+  console.log(
+    isRevision
+      ? `[Draft Node] Revising draft (revision ${state.revisionCount})...`
+      : "[Draft Node] Creating initial draft...",
+  );
 
   return {
-    finalAnswer: [
-      "Research findings:",
+    draft: [
+      "Research:",
       state.research,
       "",
       "Analysis:",
       state.analysis,
+      "",
+      isRevision
+        ? `Improved draft after revision ${state.revisionCount}.`
+        : "Initial draft.",
     ].join("\n"),
   };
 }
 
-// Build the graph.
+// 5. Simulate the Critic reviewing the draft.
+async function criticNode(
+  state: typeof ResearchState.State,
+) {
+  console.log(
+    `[Critic Node] Reviewing draft (revision count: ${state.revisionCount})...`,
+  );
+
+  // Deterministic demonstration:
+  // Reject the first draft, approve the next one.
+  const decision =
+    state.revisionCount === 0 ? "REVISE" : "APPROVE";
+
+  console.log(`[Critic Node] Decision: ${decision}`);
+
+  return {
+    criticDecision: decision as "APPROVE" | "REVISE",
+    revisionCount:
+      decision === "REVISE"
+        ? state.revisionCount + 1
+        : state.revisionCount,
+  };
+}
+
+// 6. Choose the next step.
+function routeAfterCritic(
+  state: typeof ResearchState.State,
+) {
+  if (state.criticDecision === "APPROVE") {
+    return "finalAnswerNode";
+  }
+
+  // Hard limit: allow at most two revisions.
+  if (state.revisionCount >= 2) {
+    console.log(
+      "[Router] Revision limit reached. Proceeding with the current draft.",
+    );
+    return "finalAnswerNode";
+  }
+
+  return "draftNode";
+}
+
+// 7. Produce the final answer.
+async function finalAnswerNode(
+  state: typeof ResearchState.State,
+) {
+  console.log("[Final Answer Node] Running...");
+
+  return {
+    finalAnswer: state.draft,
+  };
+}
+
+// 8. Build the graph.
 const workflow = new StateGraph(ResearchState)
   .addNode("researchNode", researchNode)
   .addNode("analysisNode", analysisNode)
-  .addNode("synthesisNode", synthesisNode)
+  .addNode("draftNode", draftNode)
+  .addNode("criticNode", criticNode)
+  .addNode("finalAnswerNode", finalAnswerNode)
   .addEdge(START, "researchNode")
   .addEdge(START, "analysisNode")
-  .addEdge("researchNode", "synthesisNode")
-  .addEdge("analysisNode", "synthesisNode")
-  .addEdge("synthesisNode", END)
+  .addEdge("researchNode", "draftNode")
+  .addEdge("analysisNode", "draftNode")
+  .addEdge("draftNode", "criticNode")
+  .addConditionalEdges("criticNode", routeAfterCritic, [
+    "finalAnswerNode",
+    "draftNode",
+  ])
+  .addEdge("finalAnswerNode", END)
   .compile();
 
-// Execute the graph.
+// 9. Execute the workflow.
 const result = await workflow.invoke({
   question: "How can AI help software developers?",
+  revisionCount: 0,
 });
 
 console.log("\nFinal Workflow State:");
