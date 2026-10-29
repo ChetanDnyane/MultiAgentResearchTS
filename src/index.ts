@@ -21,6 +21,7 @@ const ResearchState = Annotation.Root({
   criticFeedback: Annotation<string>(),
   revisionCount: Annotation<number>(),
   finalAnswer: Annotation<string>(),
+  workflowSummary: Annotation<string>(),
 });
 
 // 2. Manager: create a plan for the workflow.
@@ -217,8 +218,18 @@ async function finalAnswerNode(
 ) {
   console.log("[Final Answer Node] Running...");
 
+  const workflowSummary = [
+    `Question: ${state.question}`,
+    `Research status: ${state.researchStatus}`,
+    `Analysis status: ${state.analysisStatus}`,
+    `Critic decision: ${state.criticDecision}`,
+    `Revisions performed: ${state.revisionCount}`,
+    "Workflow status: COMPLETED",
+  ].join("\n");
+
   return {
     finalAnswer: state.draft,
+    workflowSummary,
   };
 }
 
